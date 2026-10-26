@@ -22,6 +22,8 @@ server_is_overloaded / rate limit / 429 / 5xx ...
 
 ## 安装
 
+> 下载地址：<https://github.com/csskrtao/codex-no-stop>（右上角 Code → Download ZIP）
+
 1. 把整个文件夹解压到一个**固定的位置**，例如 `C:\codex-no-stop`
    （装好后不要移动或删除，否则 `codex-retry` 会失效）
 2. 双击 `install.cmd`
