@@ -1,3 +1,4 @@
 proxy.log
+proxy/retry-stats.json
 settings.cmd
 start-proxy-hidden.vbs

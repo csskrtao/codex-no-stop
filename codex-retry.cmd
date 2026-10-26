@@ -31,9 +31,18 @@ if defined NO_PROXY (
 )
 set "no_proxy=%NO_PROXY%"
 
+rem Live retry stats in the terminal title while Codex runs.
+set "RUNFILE=%TEMP%\codex-no-stop-run-%RANDOM%%RANDOM%.lock"
+if exist "%HERE%retry-stats.ps1" start "" /b powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%retry-stats.ps1" -Mode watch -Port %CODEX_RETRY_PORT% -RunFile "%RUNFILE%" <nul >nul 2>&1
+
 call codex ^
   -c model_provider=%CODEX_PROVIDER% ^
   -c model_providers.%CODEX_PROVIDER%.base_url=http://127.0.0.1:%CODEX_RETRY_PORT%%CODEX_BASE_PATH% ^
   %*
+set "CODEX_EXIT=%errorlevel%"
 
-exit /b %errorlevel%
+rem Print how many retries this run needed (also visible after the TUI closes).
+if exist "%HERE%retry-stats.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%retry-stats.ps1" -Mode after -Port %CODEX_RETRY_PORT% -RunFile "%RUNFILE%"
+del "%RUNFILE%" >nul 2>&1
+
+exit /b %CODEX_EXIT%

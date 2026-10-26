@@ -88,6 +88,47 @@ function log(message) {
   if (!QUIET) process.stdout.write(line + '\n');
 }
 
+// ---- retry statistics -------------------------------------------------------
+// Kept in memory for the live count and persisted so the lifetime total survives
+// proxy restarts. Served over GET /__stats for the terminal-title helper.
+const STATS_FILE = process.env.CODEX_RETRY_STATS || path.join(__dirname, 'retry-stats.json');
+
+function loadStats() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    return {
+      total_retries: Number(raw.total_retries) || 0,
+      first_retry_at: raw.first_retry_at || null,
+      last_retry_at: raw.last_retry_at || null,
+      last_retry_reason: raw.last_retry_reason || null,
+    };
+  } catch (_) {
+    return { total_retries: 0, first_retry_at: null, last_retry_at: null, last_retry_reason: null };
+  }
+}
+
+const stats = loadStats();
+stats.session_retries = 0;
+stats.session_started_at = new Date().toISOString();
+
+function saveStats() {
+  try {
+    fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2) + '\n');
+  } catch (_) {
+    /* stats are best-effort */
+  }
+}
+
+function recordRetry(reason) {
+  const now = new Date().toISOString();
+  stats.total_retries += 1;
+  stats.session_retries += 1;
+  stats.last_retry_at = now;
+  stats.last_retry_reason = reason || 'unknown';
+  if (!stats.first_retry_at) stats.first_retry_at = now;
+  saveStats();
+}
+
 function snippet(text, limit = 400) {
   const flat = String(text).replace(/\s+/g, ' ').trim();
   return flat.length > limit ? flat.slice(0, limit) + '…' : flat;
@@ -454,6 +495,24 @@ async function handle(req, res, body) {  if (req.url === '/__health') {
     return;
   }
 
+  if (req.url === '/__stats') {
+    const last = stats.last_retry_at ? Date.parse(stats.last_retry_at) : null;
+    const startedAt = Date.parse(stats.session_started_at);
+    sendJson(res, 200, {
+      ok: true,
+      total_retries: stats.total_retries,
+      session_retries: stats.session_retries,
+      last_retry_at: stats.last_retry_at,
+      last_retry_reason: stats.last_retry_reason,
+      last_retry_ago_ms: last ? Date.now() - last : null,
+      first_retry_at: stats.first_retry_at,
+      session_started_at: stats.session_started_at,
+      uptime_ms: Date.now() - startedAt,
+      pid: process.pid,
+    });
+    return;
+  }
+
   const started = Date.now();
   let lastReason = 'unknown';
 
@@ -461,6 +520,7 @@ async function handle(req, res, body) {  if (req.url === '/__health') {
     if (FAKE_CAPACITY_FIRST_N > 0 && attempt <= FAKE_CAPACITY_FIRST_N) {
       log(`${req.method} ${req.url} attempt ${attempt}/${MAX_RETRIES}: [fake] capacity error`);
       lastReason = 'fake capacity error';
+      recordRetry(lastReason);
       await sleep(backoffMs(attempt, null));
       continue;
     }
@@ -470,6 +530,7 @@ async function handle(req, res, body) {  if (req.url === '/__health') {
       const outcome = await fakeStreamAttempt(res);
       if (outcome.action === 'done') return;
       lastReason = outcome.reason || 'fake stream failure';
+      recordRetry(lastReason);
       await sleep(backoffMs(attempt, null));
       continue;
     }
@@ -495,6 +556,7 @@ async function handle(req, res, body) {  if (req.url === '/__health') {
       `${req.method} ${req.url} attempt ${attempt}/${MAX_RETRIES}: ${lastReason}; ` +
         `retrying in ${(delay / 1000).toFixed(1)}s`,
     );
+    recordRetry(lastReason);
     await sleep(delay);
   }
 
